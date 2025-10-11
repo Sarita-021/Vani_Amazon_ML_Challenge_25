@@ -12,8 +12,10 @@ HTMLParser
 ipython
 ipywidgets
 js
+keras
 keyring
 numpy
+opencv-python
 pandas
 pillow
 protobuf
