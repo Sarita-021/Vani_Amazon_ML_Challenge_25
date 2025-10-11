@@ -21,7 +21,7 @@ def predictor(sample_id, catalog_content, image_link):
     return round(random.uniform(5.0, 500.0), 2)
 
 if __name__ == "__main__":
-    DATASET_FOLDER = 'dataset/'
+    DATASET_FOLDER = 'dataset'
     
     # Read test data
     test = pd.read_csv(os.path.join(DATASET_FOLDER, 'test.csv'))

@@ -9,7 +9,7 @@ from sklearn.preprocessing import QuantileTransformer
 
 # Import your feature extraction modules
 from src.text_features import engineer_text_features
-from src.image_features import extract_comprehensive_image_features # Assuming the final function name from your latest upload
+from src.image_features import extract_comprehensive_image_features
 
 # --- Configuration ---
 DATASET_FOLDER = 'dataset'
@@ -30,16 +30,15 @@ def train_and_predict_pipeline():
     # --- 1. Data Loading ---
     print("🚀 Loading Training and Test Data...")
     try:
-        # NOTE: Using 'sample_test1.csv' and 'sample_code.py' structure for now
-        # You must change this to 'train.csv' and 'test.csv' for submission
-        train_df = pd.read_csv(os.path.join(DATASET_FOLDER, 'sample_test1.csv')) # Replace with 'train.csv'
-        test_df = pd.read_csv(os.path.join(DATASET_FOLDER, 'sample_test1.csv'))  # Replace with 'test.csv'
+        # Load training and test data
+        train_df = pd.read_csv(os.path.join(DATASET_FOLDER, 'train.csv'))
+        test_df = pd.read_csv(os.path.join(DATASET_FOLDER, 'test.csv'))
         
-        # In a real scenario, you'd use the actual price column from train.csv
-        # For this demo with sample_test1, we'll create a dummy target for structure
+        # Verify price column exists in training data
         if 'price' not in train_df.columns:
-             print("⚠️ WARNING: 'price' column not found. Using dummy target for demo.")
-             train_df['price'] = np.random.uniform(10, 500, len(train_df))
+            print("❌ ERROR: 'price' column not found in training data.")
+            print("   Please ensure train.csv contains the 'price' column.")
+            return
 
     except FileNotFoundError as e:
         print(f"❌ Error: Required data file not found: {e}")
@@ -51,26 +50,30 @@ def train_and_predict_pipeline():
     
     # --- 3. Feature Engineering ---
     print("\n📝 Extracting Text Features...")
-    # NOTE: Pass train_df to fit TFIDF/Brand OHE, then apply to test_df
+    # Fit text features on training data
     X_train_text_sparse, _, tfidf_vectorizer, _ = engineer_text_features(
         train_df, 
         fit_tfidf=True, 
-        analyze_importance=False # Set to False for faster training
+        analyze_importance=False
     )
+    # Transform test data using fitted transformers
     X_test_text_sparse, _, _, _ = engineer_text_features(
         test_df, 
         fit_tfidf=False, 
         tfidf_vectorizer=tfidf_vectorizer,
         analyze_importance=False
-    ) # Needs to be transformed by same TFIDF
+    )
 
     # --- 4. Image Feature Extraction ---
     print("\n🖼️ Extracting Image Features...")
-    # These are dense NumPy arrays
-    X_train_image, _ = extract_comprehensive_image_features(train_df)
-    X_test_image, _ = extract_comprehensive_image_features(test_df)
+    X_train_image, _ = extract_comprehensive_image_features(
+        train_df, use_deep_features=True, model_name='resnet50'
+    )
+    X_test_image, _ = extract_comprehensive_image_features(
+        test_df, use_deep_features=True, model_name='resnet50'
+    )
 
-    # Explicitly cast image features to float64 to prevent string/object dtype errors
+    # Cast to float64 for consistency
     X_train_image = X_train_image.astype(np.float64)
     X_test_image = X_test_image.astype(np.float64)
 
@@ -122,10 +125,16 @@ def train_and_predict_pipeline():
         'price': Y_pred
     })
     
+    # Save predictions
     submission_df.to_csv(OUTPUT_PATH, index=False)
     
-    print(f"\n📁 Predictions successfully saved to {OUTPUT_PATH}")
-    print(f"Sample Output:\n{submission_df.head()}")
+    print(f"\n📁 Predictions saved to {OUTPUT_PATH}")
+    print(f"Total predictions: {len(submission_df)}")
+    print(f"Price range: ${Y_pred.min():.2f} - ${Y_pred.max():.2f}")
+    print(f"Sample predictions:\n{submission_df.head()}")
+    
+    print("\n✅ Training and prediction pipeline completed successfully!")
+    print("🚀 Ready for submission to ML Challenge!")
 
 
 if __name__ == "__main__":

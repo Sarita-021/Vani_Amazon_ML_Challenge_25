@@ -419,19 +419,38 @@ def engineer_text_features(df: pd.DataFrame, fit_tfidf=True, tfidf_vectorizer=No
     return final_features_matrix, feature_summary, tfidf, importance_df
 
 if __name__ == "__main__":
-    print("🎯 Optimized Enhanced Text Feature Engineering Demo")
+    print("🎯 Text Feature Engineering for Production")
     print("=" * 60)
     
     DATASET_FOLDER = 'dataset'
-    TEST_DATA_PATH = os.path.join(DATASET_FOLDER, 'sample_test1.csv')
+    TRAIN_DATA_PATH = os.path.join(DATASET_FOLDER, 'train.csv')
+    TEST_DATA_PATH = os.path.join(DATASET_FOLDER, 'test.csv')
     
-    if not os.path.exists(TEST_DATA_PATH):
-        print(f"❌ Error: Could not find '{TEST_DATA_PATH}'")
-        print("   Please ensure files are in 'dataset/' folder")
+    # Load training data for fitting transformers
+    if os.path.exists(TRAIN_DATA_PATH):
+        print(f"📂 Loading training data from: {TRAIN_DATA_PATH}")
+        train_df = pd.read_csv(TRAIN_DATA_PATH)
+        print(f"   ✓ Loaded {len(train_df)} training samples")
+        
+        # Fit on training data
+        train_features, _, tfidf_vectorizer, _ = engineer_text_features(
+            train_df, fit_tfidf=True, analyze_importance=False
+        )
+        print(f"   ✓ Training features shape: {train_features.shape}")
+        
+        # Transform test data if available
+        if os.path.exists(TEST_DATA_PATH):
+            print(f"📂 Loading test data from: {TEST_DATA_PATH}")
+            test_df = pd.read_csv(TEST_DATA_PATH)
+            print(f"   ✓ Loaded {len(test_df)} test samples")
+            
+            test_features, _, _, _ = engineer_text_features(
+                test_df, fit_tfidf=False, tfidf_vectorizer=tfidf_vectorizer
+            )
+            print(f"   ✓ Test features shape: {test_features.shape}")
     else:
-        print(f"📂 Loading data from: {TEST_DATA_PATH}")
-        test_df = pd.read_csv(TEST_DATA_PATH)
-        print(f"   ✓ Loaded {len(test_df)} samples")
+        print(f"❌ Error: Could not find train.csv in 'dataset/' folder")
+        exit()
         
         # Run optimized feature engineering
         final_features, feature_summary, tfidf_vectorizer, importance_df = engineer_text_features(

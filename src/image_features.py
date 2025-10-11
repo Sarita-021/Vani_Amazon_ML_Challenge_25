@@ -280,21 +280,43 @@ def extract_comprehensive_image_features(df: pd.DataFrame, use_deep_features=Tru
     return final_features, feature_names
 
 if __name__ == "__main__":
-    print("🎯 Enhanced Image Feature Extraction Demo")
+    print("🎯 Image Feature Extraction for Production")
     print("=" * 50)
     
     DATASET_FOLDER = 'dataset'
-    TEST_DATA_PATH = os.path.join(DATASET_FOLDER, 'sample_test1.csv')
+    TRAIN_DATA_PATH = os.path.join(DATASET_FOLDER, 'train.csv')
+    TEST_DATA_PATH = os.path.join(DATASET_FOLDER, 'test.csv')
     
     if not os.path.exists(IMAGE_DOWNLOAD_FOLDER):
         print(f"❌ Error: Image folder '{IMAGE_DOWNLOAD_FOLDER}' not found.")
-        print("   Please download images first using utils.py")
-    elif not os.path.exists(TEST_DATA_PATH):
-        print(f"❌ Error: Could not find '{TEST_DATA_PATH}'")
+        print("   Please download images first using data_setup.py")
+        exit()
+    
+    # Load training data
+    if os.path.exists(TRAIN_DATA_PATH):
+        print(f"📂 Loading training data from: {TRAIN_DATA_PATH}")
+        train_df = pd.read_csv(TRAIN_DATA_PATH)
+        print(f"   ✓ Loaded {len(train_df)} training samples")
+        
+        # Extract training features
+        train_features, feature_names = extract_comprehensive_image_features(
+            train_df, use_deep_features=True, model_name='resnet50'
+        )
+        print(f"   ✓ Training features shape: {train_features.shape}")
+        
+        # Extract test features if available
+        if os.path.exists(TEST_DATA_PATH):
+            print(f"📂 Loading test data from: {TEST_DATA_PATH}")
+            test_df = pd.read_csv(TEST_DATA_PATH)
+            print(f"   ✓ Loaded {len(test_df)} test samples")
+            
+            test_features, _ = extract_comprehensive_image_features(
+                test_df, use_deep_features=True, model_name='resnet50'
+            )
+            print(f"   ✓ Test features shape: {test_features.shape}")
     else:
-        print(f"📂 Loading data from: {TEST_DATA_PATH}")
-        test_df = pd.read_csv(TEST_DATA_PATH)
-        print(f"   ✓ Loaded {len(test_df)} samples")
+        print(f"❌ Error: Could not find train.csv in 'dataset/' folder")
+        exit()
         
         # Extract comprehensive features
         image_features, feature_names = extract_comprehensive_image_features(
