@@ -36,12 +36,6 @@ ENV/
 # VS Code
 .vscode/
 
-# Dataset files (large files)
-dataset/train.csv
-dataset/test.csv
-dataset/sample_test.csv
-dataset/sample_test_out.csv
-
 # Downloaded images
 images/
 *.jpg
@@ -93,5 +87,3 @@ mlruns/
 
 # Weights & Biases
 wandb/
-
-images/
