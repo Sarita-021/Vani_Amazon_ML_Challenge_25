@@ -284,7 +284,7 @@ if __name__ == "__main__":
     print("=" * 50)
     
     DATASET_FOLDER = 'dataset'
-    TEST_DATA_PATH = os.path.join(DATASET_FOLDER, 'sample_test.csv')
+    TEST_DATA_PATH = os.path.join(DATASET_FOLDER, 'sample_test1.csv')
     
     if not os.path.exists(IMAGE_DOWNLOAD_FOLDER):
         print(f"❌ Error: Image folder '{IMAGE_DOWNLOAD_FOLDER}' not found.")

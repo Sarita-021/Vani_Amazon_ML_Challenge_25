@@ -22,7 +22,7 @@ def setup_and_download_data():
     print("Loading data...")
     # NOTE: Since we only have sample_test.csv, we'll load it for demonstration.
     # In a real scenario, you'd also load 'train.csv'.
-    TEST_DATA_PATH = os.path.join(DATASET_FOLDER, 'sample_test.csv') 
+    TEST_DATA_PATH = os.path.join(DATASET_FOLDER, 'sample_test1.csv') 
     
     try:
         # Load the sample test data
@@ -30,7 +30,7 @@ def setup_and_download_data():
         print(f"Successfully loaded {TEST_DATA_PATH}.")
     except FileNotFoundError:
         # If the data file is not in 'dataset/', check the root directory as a fallback
-        TEST_DATA_PATH = 'sample_test.csv'
+        TEST_DATA_PATH = 'sample_test1.csv'
         try:
             test_df = pd.read_csv(TEST_DATA_PATH)
             print(f"Successfully loaded {TEST_DATA_PATH}.")
@@ -57,6 +57,6 @@ def setup_and_download_data():
     print(f"Check the '{IMAGE_DOWNLOAD_FOLDER}' folder for the downloaded product images.")
 
 if __name__ == "__main__":
-    # Ensure you have moved 'sample_test.csv' into a created 'dataset/' folder
+    # Ensure you have moved 'sample_test1.csv' into a created 'dataset/' folder
     # or adjust the path variables if your data is elsewhere.
     setup_and_download_data()

@@ -267,7 +267,7 @@ def analyze_feature_importance(X, y, feature_names, top_n=20):
     
     return importance_df
 
-def engineer_enhanced_text_features_optimized(df: pd.DataFrame, fit_tfidf=True, tfidf_vectorizer=None, 
+def engineer_text_features(df: pd.DataFrame, fit_tfidf=True, tfidf_vectorizer=None, 
                                             cluster_stats=None, analyze_importance=False):
     """
     Optimized enhanced text feature engineering
@@ -423,7 +423,7 @@ if __name__ == "__main__":
     print("=" * 60)
     
     DATASET_FOLDER = 'dataset'
-    TEST_DATA_PATH = os.path.join(DATASET_FOLDER, 'sample_test.csv')
+    TEST_DATA_PATH = os.path.join(DATASET_FOLDER, 'sample_test1.csv')
     
     if not os.path.exists(TEST_DATA_PATH):
         print(f"❌ Error: Could not find '{TEST_DATA_PATH}'")
@@ -434,7 +434,7 @@ if __name__ == "__main__":
         print(f"   ✓ Loaded {len(test_df)} samples")
         
         # Run optimized feature engineering
-        final_features, feature_summary, tfidf_vectorizer, importance_df = engineer_enhanced_text_features_optimized(
+        final_features, feature_summary, tfidf_vectorizer, importance_df = engineer_text_features(
             test_df, analyze_importance=False
         )
         
