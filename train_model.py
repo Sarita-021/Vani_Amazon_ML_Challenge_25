@@ -15,7 +15,7 @@ from src.image_features import extract_comprehensive_image_features
 DATASET_FOLDER = 'dataset'
 TRAIN_DATA_PATH = os.path.join(DATASET_FOLDER, 'train.csv') # Assuming you have this file
 TEST_DATA_PATH = os.path.join(DATASET_FOLDER, 'test.csv')   # Assuming you have this file
-OUTPUT_PATH = os.path.join(DATASET_FOLDER, 'predictions.csv')
+OUTPUT_PATH = os.path.join(DATASET_FOLDER, 'train.csv')
 
 # --- SMAPE Metric Function ---
 def smape(y_true, y_pred):

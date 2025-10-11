@@ -55,7 +55,7 @@ models/
 
 # Output files
 test_out.csv
-predictions.csv
+train.csv
 submission.csv
 
 # Logs
