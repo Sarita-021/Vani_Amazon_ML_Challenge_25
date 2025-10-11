@@ -5,6 +5,7 @@ chardet
 ConfigParser
 cryptography
 docutils
+en-core-web-sm
 filelock
 h2
 HTMLParser
@@ -21,7 +22,11 @@ redis
 requests
 simplejson
 scikit-learn
+sentence-transformers
+spacy
 Sphinx
+tensorflow
+tf-keras
 thread
 tqdm
 typing_extensions

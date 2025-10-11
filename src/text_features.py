@@ -1,33 +1,26 @@
-import pandas as pd
-import numpy as np
-import re
-from sklearn.feature_extraction.text import TfidfVectorizer
-from scipy.sparse import hstack, coo_matrix # Need coo_matrix for internal numpy conversion
 import os
+import re
+import spacy
+import numpy as np
+import pandas as pd
+from collections import Counter
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.cluster import MiniBatchKMeans
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics.pairwise import cosine_similarity
+from sentence_transformers import SentenceTransformer
+from scipy.sparse import hstack, csr_matrix
 
-# --- Conversion Constants (Standard Physics/Chemistry) ---
+# Load spaCy model for lightweight NER (ORG, PRODUCT, etc.)
+nlp = spacy.load("en_core_web_sm")
+
+# --- Conversion Constants ---
 CONVERSION_FACTORS = {
-    # Weight (Base Unit: Grams)
-    'kilogram': 1000.0,
-    'pound': 453.592,       
-    'ounce': 28.3495,       
-    'gram': 1.0,
-    'milligram': 0.001,
-    
-    # Volume (Base Unit: Milliliters)
-    'liter': 1000.0,
-    'milliliter': 1.0,
-    'fluid_ounce': 29.5735, # 1 fl oz = 29.5735 ml
-    
-    # Count (Base Unit: 1)
-    'count': 1.0,
-    'pack': 1.0,
-    'pair': 1.0,
-    'other_unit': 1.0,
-    'missing': 1.0 
+    'kilogram': 1000.0, 'pound': 453.592, 'ounce': 28.3495, 'gram': 1.0, 'milligram': 0.001,
+    'liter': 1000.0, 'milliliter': 1.0, 'fluid_ounce': 29.5735,
+    'count': 1.0, 'pack': 1.0, 'pair': 1.0, 'other_unit': 1.0, 'missing': 1.0 
 }
 
-# --- Unit Categories ---
 UNIT_CATEGORIES = {
     'kilogram': 'weight', 'pound': 'weight', 'ounce': 'weight', 'gram': 'weight', 'milligram': 'weight',
     'liter': 'volume', 'milliliter': 'volume', 'fluid_ounce': 'volume',
@@ -35,149 +28,436 @@ UNIT_CATEGORIES = {
     'other_unit': 'other', 'missing': 'other'
 }
 
-def clean_text(text):
+# --- Enhanced Price-indicative Keywords ---
+LUXURY_KEYWORDS = ['premium', 'professional', 'deluxe', 'luxury', 'pro', 'advanced', 'elite', 'superior', 'gourmet', 'artisan', 'organic']
+BUDGET_KEYWORDS = ['basic', 'economy', 'budget', 'standard', 'simple', 'essential', 'value']
+STRONG_BRANDS = ['starbucks', 'coca-cola', 'kellogg', 'nestle', 'pepsi', 'kraft', 'general mills']
+
+def extract_brand(text):
+    """Extract probable brand name from product text without predefined list."""
+    if not isinstance(text, str):
+        return None
+
+    # 1️⃣ Extract 'Item Name' segment if available
+    match = re.search(r"Item Name:\s*(.*?)(?:\n|Bullet Point|Product Description|Value|$)", 
+                      text, re.IGNORECASE | re.DOTALL)
+    item_name = match.group(1).strip() if match else text.strip()
+
+    # 2️⃣ Clean and standardize
+    item_name = re.sub(r"[-|–|,|\(|\[].*?$", "", item_name)  # remove trailing junk
+    item_name = re.sub(r"\s+", " ", item_name).strip()
+
+    # 3️⃣ Look for brand-like patterns (first capitalized phrase)
+    # e.g., "Gift Basket Village", "Bear Creek Country Kitchens"
+    pattern = re.match(r"([A-Z][a-zA-Z&\s]{1,40})", item_name)
+    if pattern:
+        candidate = pattern.group(1).strip()
+        # If it’s 1–4 words and not generic, likely a brand
+        if len(candidate.split()) <= 4 and not any(w.lower() in ["item", "product", "gift", "set"] for w in candidate.split()):
+            return candidate
+
+    # 4️⃣ Fallback: Use spaCy NER
+    doc = nlp(item_name)
+    for ent in doc.ents:
+        if ent.label_ in ["ORG", "PRODUCT"]:
+            return ent.text.strip()
+
+    # 5️⃣ Fallback: first 2–3 words if nothing else
+    words = item_name.split()
+    return " ".join(words[:3]).strip() if words else None
+
+def extract_category(text):
+    """Extracts broad product category from text"""
+    if pd.isna(text):
+        return "other"
+
+    text = str(text).lower()
+
+    generic_keywords = [
+        "electronics", "home", "kitchen", "beauty", "health", "personal care",
+        "clothing", "accessories", "sports", "outdoor", "automotive",
+        "baby", "grocery", "pet", "office", "furniture", "tools",
+        "garden", "toy", "book", "musical", "art", "industrial"
+    ]
+
+    for kw in generic_keywords:
+        if kw in text:
+            return kw
+
+    doc = nlp(text)
+    labels = [ent.label_ for ent in doc.ents]
+    if "PRODUCT" in labels:
+        return "product"
+    if "ORG" in labels:
+        return "brand_related"
+
+    tokens = re.findall(r"[a-zA-Z]+", text)
+    common = Counter(tokens).most_common(10)
+
+    for word, _ in common:
+        if any(x in word for x in ["food", "snack", "drink", "chocolate"]):
+            return "grocery"
+        if any(x in word for x in ["cream", "soap", "shampoo", "makeup"]):
+            return "beauty"
+        if any(x in word for x in ["shirt", "pant", "dress", "shoe"]):
+            return "clothing"
+        if any(x in word for x in ["chair", "table", "sofa", "bed", "lamp"]):
+            return "home"
+
+    return "other"
+
+def extract_price_indicators(text):
+    """Extract price-related signals from text"""
+    if pd.isna(text):
+        return {'premium_count': 0, 'bulk_indicators': 0, 'size_mentions': 0, 'brand_strength': 0}
+    
+    text = str(text).lower()
+    return {
+        'premium_count': len(re.findall(r'premium|gourmet|artisan|organic|luxury', text)),
+        'bulk_indicators': len(re.findall(r'pack of \d+|bulk|case of|\d+\s*count', text)),
+        'size_mentions': len(re.findall(r'\d+\s*(oz|lb|ml|g|count|fl oz)', text)),
+        'brand_strength': 1 if any(brand in text for brand in STRONG_BRANDS) else 0
+    }
+
+def cluster_similar_products_optimized(df, text_column="catalog_content", n_clusters=None):
+    """Optimized semantic clustering with adaptive cluster count"""
+    print("🔹 Running optimized semantic clustering...")
+    df = df.copy()
+    
+    # Adaptive cluster count
+    if n_clusters is None:
+        n_clusters = min(50, max(10, len(df) // 100))
+    
+    texts = df[text_column].fillna("").astype(str).tolist()
+    
+    # Use lighter model for speed
+    model = SentenceTransformer("all-MiniLM-L6-v2")
+    embeddings = model.encode(texts, batch_size=512, show_progress_bar=True)
+    
+    # Use MiniBatchKMeans for better performance
+    kmeans = MiniBatchKMeans(n_clusters=n_clusters, random_state=42, batch_size=1000)
+    cluster_labels = kmeans.fit_predict(embeddings)
+    df["cluster_label"] = cluster_labels
+    
+    # Generate cluster keywords using TF-IDF
+    vectorizer = TfidfVectorizer(stop_words="english", max_features=2000)
+    tfidf = vectorizer.fit_transform(texts)
+    terms = vectorizer.get_feature_names_out()
+    
+    cluster_keywords = {}
+    for i in range(n_clusters):
+        cluster_indices = np.where(cluster_labels == i)[0]
+        if len(cluster_indices) > 0:
+            cluster_tfidf = tfidf[cluster_indices].mean(axis=0)
+            top_terms = np.argsort(np.array(cluster_tfidf).ravel())[-5:][::-1]
+            cluster_keywords[i] = " ".join(terms[j] for j in top_terms)
+        else:
+            cluster_keywords[i] = "misc"
+    
+    df["cluster_keywords"] = df["cluster_label"].map(cluster_keywords)
+    
+    print(f"   ✓ Created {n_clusters} clusters with {len(embeddings)} products")
+    return df, embeddings, cluster_keywords
+
+def create_price_range_features(df, cluster_col='cluster_label'):
+    """Create price-based cluster statistics for training data"""
+    if 'price' in df.columns:
+        print("💲 Creating price range features...")
+        cluster_stats = df.groupby(cluster_col)['price'].agg(['mean', 'std', 'min', 'max', 'count'])
+        df['cluster_price_mean'] = df[cluster_col].map(cluster_stats['mean'])
+        df['cluster_price_std'] = df[cluster_col].map(cluster_stats['std']).fillna(0)
+        df['cluster_size'] = df[cluster_col].map(cluster_stats['count'])
+        print(f"   ✓ Added cluster price statistics")
+    return df
+
+def extract_numerical_features(text):
+    """Extract numerical specifications"""
+    if pd.isna(text):
+        return {}
+    
+    text = str(text)
+    features = {}
+    
+    # Extract dimensions
+    dimension_match = re.search(r'(\d+\.?\d*)\s*x\s*(\d+\.?\d*)\s*x\s*(\d+\.?\d*)', text)
+    if dimension_match:
+        dims = [float(d) for d in dimension_match.groups()]
+        features['volume_estimate'] = dims[0] * dims[1] * dims[2]
+        features['max_dimension'] = max(dims)
+    
+    # Extract numbers
+    numbers = re.findall(r'\b(\d+\.?\d*)\b', text)
+    if numbers:
+        features['number_count'] = len(numbers)
+        features['max_number'] = max(float(n) for n in numbers)
+    
+    return features
+
+def calculate_text_richness(text):
+    """Calculate text richness metrics"""
+    if pd.isna(text):
+        return {'char_count': 0, 'word_count': 0, 'sentence_count': 0}
+    
+    text = str(text)
+    return {
+        'char_count': len(text),
+        'word_count': len(text.split()),
+        'sentence_count': len(re.split(r'[.!?]+', text))
+    }
+
+def count_price_keywords(text):
+    """Count luxury and budget keywords"""
+    if pd.isna(text):
+        return {'luxury_count': 0, 'budget_count': 0}
+    
+    text = str(text).lower()
+    return {
+        'luxury_count': sum(1 for word in LUXURY_KEYWORDS if word in text),
+        'budget_count': sum(1 for word in BUDGET_KEYWORDS if word in text)
+    }
+
+def clean_text_enhanced(text):
+    """Enhanced text cleaning"""
     if pd.isna(text):
         return ""
+    
     text = str(text).lower()
-    text = re.sub(r'[^a-z0-9\s\.,]', '', text) 
-    text = re.sub(r'bullet point \d+|item name|value|unit', '', text)
+    text = re.sub(r'[^\w\s\.\-]', ' ', text)
+    text = re.sub(r'\b(bullet point \d+|item name|value|unit)\b', '', text)
+    text = re.sub(r'\s+', ' ', text).strip()
+    
     return text
 
 def standardize_unit(unit):
-    """
-    Converts various unit abbreviations to a single, standard lowercase unit.
-    (FIXED: Added base units to the mapping.)
-    """
+    """Standardize unit abbreviations"""
     if pd.isna(unit) or unit is None:
         return 'missing'
     
     unit = str(unit).lower().strip()
-    
     unit_mapping = {
-        # Abbreviations and plurals
-        'oz': 'ounce', 'ounces': 'ounce',
-        'fl oz': 'fluid_ounce', 'fl ounce': 'fluid_ounce',
-        'lb': 'pound', 'lbs': 'pound', 
-        'ct': 'count', 'counts': 'count',
-        'g': 'gram', 'gs': 'gram',
-        'kg': 'kilogram', 
-        'ml': 'milliliter',
-        'mg': 'milligram',
-        'l': 'liter',
-        'pk': 'pack', 'packs': 'pack',
-        'pair': 'pair',
-        'ounce': 'ounce', 
-        'pound': 'pound', 
-        'count': 'count', 
-        'gram': 'gram',
-        'kilogram': 'kilogram',
-        'milliliter': 'milliliter',
-        'milligram': 'milligram',
-        'liter': 'liter',
-        'pack': 'pack',
-        'pair': 'pair',
-        'fluid_ounce': 'fluid_ounce', # Ensure this base unit is also included
+        'oz': 'ounce', 'ounces': 'ounce', 'fl oz': 'fluid_ounce',
+        'lb': 'pound', 'lbs': 'pound', 'ct': 'count', 'counts': 'count',
+        'g': 'gram', 'gs': 'gram', 'kg': 'kilogram', 'ml': 'milliliter',
+        'mg': 'milligram', 'l': 'liter', 'pk': 'pack', 'packs': 'pack'
     }
     
-    # Return the standardized unit, or 'other_unit' if not found
-    return unit_mapping.get(unit, 'other_unit')
-
+    return unit_mapping.get(unit, unit if unit in CONVERSION_FACTORS else 'other_unit')
 
 def convert_to_base_value(row):
-    """
-    Converts the IPQ_Value to a base unit value (Grams, Milliliters, or 1 for Count).
-    """
+    """Convert IPQ value to base units"""
     value = row['IPQ_Value']
     standard_unit = row['IPQ_Unit_Standardized']
-    
     conversion_factor = CONVERSION_FACTORS.get(standard_unit, 1.0)
-    
     return value * conversion_factor
+
+def analyze_feature_importance(X, y, feature_names, top_n=20):
+    """Quick feature importance analysis"""
+    print("🔍 Analyzing feature importance...")
+    rf = RandomForestRegressor(n_estimators=50, random_state=42, n_jobs=-1)
+    rf.fit(X, y)
     
-def engineer_text_features(df: pd.DataFrame):
+    importance_df = pd.DataFrame({
+        'feature': feature_names[:len(rf.feature_importances_)],
+        'importance': rf.feature_importances_
+    }).sort_values('importance', ascending=False)
+    
+    print(f"   ✓ Top {top_n} most important features:")
+    for i, row in importance_df.head(top_n).iterrows():
+        print(f"      {row['feature']}: {row['importance']:.4f}")
+    
+    return importance_df
+
+def engineer_enhanced_text_features_optimized(df: pd.DataFrame, fit_tfidf=True, tfidf_vectorizer=None, 
+                                            cluster_stats=None, analyze_importance=False):
     """
-    Extracts standardized IPQ/Unit features and unstructured TF-IDF features.
-    (This function no longer handles the raw unit extraction, but assumes it has 
-     access to the original DataFrame and performs the standardization/conversion.)
+    Optimized enhanced text feature engineering
     """
-    # --- Raw Extraction (Required for the function logic) ---
+    print("🚀 Starting Optimized Enhanced Text Feature Engineering...")
+    df = df.copy()
+    
+    # 1. Extract IPQ features
+    print("📊 Extracting IPQ features...")
     regex_value_unit = r"Value: (\d+\.?\d*)\nUnit: ([\w\s]+)\n"
-    extracted_features = df['catalog_content'].apply(lambda x: re.search(regex_value_unit, str(x)) if pd.notna(x) else None)
+    extracted_features = df['catalog_content'].apply(
+        lambda x: re.search(regex_value_unit, str(x)) if pd.notna(x) else None
+    )
     
-    df['IPQ_Value'] = extracted_features.apply(lambda x: float(x.group(1)) if x and x.group(1) else np.nan)
-    raw_unit = extracted_features.apply(lambda x: x.group(2) if x and x.group(2) else None)
+    df['IPQ_Value'] = extracted_features.apply(
+        lambda x: float(x.group(1)) if x and x.group(1) else 1.0
+    )
+    raw_unit = extracted_features.apply(
+        lambda x: x.group(2) if x and x.group(2) else None
+    )
     
-    df['IPQ_Value'] = df['IPQ_Value'].fillna(1.0)
-    
-    # --- 2. Standardization and Categorization ---
     df['IPQ_Unit_Standardized'] = raw_unit.apply(standardize_unit)
     df['IPQ_Base_Value'] = df.apply(convert_to_base_value, axis=1)
     df['IPQ_Unit_Type'] = df['IPQ_Unit_Standardized'].map(UNIT_CATEGORIES).fillna('other')
-
-    # --- 3. Unstructured Feature Preparation (Text Cleaning) ---
-    df['cleaned_content'] = df['catalog_content'].apply(clean_text)
-
-    # --- 4. TF-IDF Vectorization ---
-    # NOTE: In a real train/test split, you must fit TFIDF only on the training data 
-    # and then transform both train and test.
-    tfidf = TfidfVectorizer(
-        ngram_range=(1, 2),        
-        max_features=5000,         
-        stop_words='english',
-        min_df=5                   
-    )
-    content_tfidf = tfidf.fit_transform(df['cleaned_content'])
     
-    # --- 5. Combining Features ---
-    # One-Hot Encode the Unit Type (Weight, Volume, Count, Other)
-    unit_type_dummies = pd.get_dummies(df['IPQ_Unit_Type'], prefix='Unit_Type')
+    print(f"   ✓ IPQ extraction complete. Found {df['IPQ_Value'].notna().sum()} valid IPQ values")
     
-    # Use the new numerical Base Value feature
-    ipq_base_value_array = df[['IPQ_Base_Value']].values
+    # 2. Extract brand and category
+    print("🏷️  Extracting brands and categories...")
+    df['brand'] = df['catalog_content'].apply(extract_brand)
+    df['category'] = df['catalog_content'].apply(extract_category)
     
-    # FIX: Use numpy.hstack (np.hstack) to combine the DENSE features (Dummies and Value).
-    # This prevents the scipy.sparse.hstack internal error when called on two dense inputs.
-    dense_structured_features = np.hstack([unit_type_dummies.values, ipq_base_value_array])
+    # 3. Optimized semantic clustering
+    df, embeddings, cluster_keywords = cluster_similar_products_optimized(df, text_column='catalog_content')
     
-    # Now, combine the sparse TF-IDF matrix with the dense structured features 
-    # using scipy.sparse.hstack (aliased as hstack). This function can handle 
-    # converting the dense array to sparse for the final assembly.
-    final_features_matrix = hstack([content_tfidf, dense_structured_features])
+    # 4. Create price range features if training data
+    df = create_price_range_features(df)
     
-    ipq_unit_df = pd.concat([df['IPQ_Base_Value'], df['IPQ_Unit_Type'], unit_type_dummies], axis=1)
-
-    print("Text Feature Engineering complete.")
-    return final_features_matrix, ipq_unit_df
-
+    # 5. Extract price indicators
+    print("💰 Extracting price indicators...")
+    price_indicators = df['catalog_content'].apply(extract_price_indicators)
+    for feature in ['premium_count', 'bulk_indicators', 'size_mentions', 'brand_strength']:
+        df[feature] = price_indicators.apply(lambda x: x.get(feature, 0))
+    
+    # 6. Extract numerical features
+    print("🔢 Extracting numerical specifications...")
+    numerical_features = df['catalog_content'].apply(extract_numerical_features)
+    for feature in ['volume_estimate', 'max_dimension', 'number_count', 'max_number']:
+        df[feature] = numerical_features.apply(lambda x: x.get(feature, 0))
+    
+    # 7. Calculate text richness
+    print("📝 Calculating text richness metrics...")
+    richness_features = df['catalog_content'].apply(calculate_text_richness)
+    for feature in ['char_count', 'word_count', 'sentence_count']:
+        df[feature] = richness_features.apply(lambda x: x[feature])
+    
+    # 8. Count price keywords
+    keyword_features = df['catalog_content'].apply(count_price_keywords)
+    for feature in ['luxury_count', 'budget_count']:
+        df[feature] = keyword_features.apply(lambda x: x[feature])
+    
+    print(f"   ✓ Extracted {df['premium_count'].gt(0).sum()} products with premium indicators")
+    print(f"   ✓ Found {df['bulk_indicators'].gt(0).sum()} products with bulk indicators")
+    
+    # 9. Optimized TF-IDF
+    print("🧹 Enhanced text cleaning and optimized TF-IDF...")
+    df['cleaned_content'] = df['catalog_content'].apply(clean_text_enhanced)
+    
+    if fit_tfidf:
+        tfidf = TfidfVectorizer(
+            ngram_range=(1, 2),
+            max_features=2000,  # Reduced for performance
+            stop_words='english',
+            min_df=3,
+            sublinear_tf=True
+        )
+        content_tfidf = tfidf.fit_transform(df['cleaned_content'])
+        print(f"   ✓ TF-IDF fitted with {content_tfidf.shape[1]} features")
+    else:
+        if tfidf_vectorizer is None:
+            raise ValueError("tfidf_vectorizer must be provided when fit_tfidf=False")
+        content_tfidf = tfidf_vectorizer.transform(df['cleaned_content'])
+        tfidf = tfidf_vectorizer
+        print(f"   ✓ TF-IDF transformed with {content_tfidf.shape[1]} features")
+    
+    # 10. Create categorical features
+    print("🏗️  Creating categorical features...")
+    categorical_features = []
+    
+    unit_type_dummies = pd.get_dummies(df['IPQ_Unit_Type'], prefix='Unit')
+    category_dummies = pd.get_dummies(df['category'], prefix='Cat')
+    cluster_dummies = pd.get_dummies(df['cluster_label'], prefix='Cluster')
+    
+    # Top brands only
+    top_brands = df['brand'].value_counts().head(5).index
+    for brand in top_brands:
+        df[f'Brand_{brand}'] = (df['brand'] == brand).astype(int)
+    
+    categorical_features.extend([unit_type_dummies, category_dummies, cluster_dummies])
+    
+    # 11. Combine all features
+    print("🔗 Combining all features...")
+    numerical_cols = [
+        'IPQ_Base_Value', 'volume_estimate', 'max_dimension', 'number_count', 
+        'max_number', 'char_count', 'word_count', 'sentence_count',
+        'luxury_count', 'budget_count', 'premium_count', 'bulk_indicators', 
+        'size_mentions', 'brand_strength'
+    ]
+    
+    # Add cluster price features if available
+    if 'cluster_price_mean' in df.columns:
+        numerical_cols.extend(['cluster_price_mean', 'cluster_price_std', 'cluster_size'])
+    
+    # Add brand features
+    brand_cols = [col for col in df.columns if col.startswith('Brand_')]
+    numerical_cols.extend(brand_cols)
+    
+    numerical_features_array = df[numerical_cols].fillna(0).values
+    categorical_combined = np.hstack([cat_df.values for cat_df in categorical_features])
+    
+    # Memory-optimized feature combination
+    dense_features = np.hstack([numerical_features_array, categorical_combined])
+    final_features_matrix = hstack([content_tfidf, dense_features])
+    
+    # Convert to CSR for memory efficiency
+    final_features_matrix = csr_matrix(final_features_matrix)
+    
+    print(f"✅ Optimized feature engineering complete!")
+    print(f"   📏 Final feature matrix shape: {final_features_matrix.shape}")
+    print(f"   📊 TF-IDF features: {content_tfidf.shape[1]}")
+    print(f"   🔢 Numerical features: {len(numerical_cols)}")
+    print(f"   🏷️  Categorical features: {categorical_combined.shape[1]}")
+    print(f"   💾 Memory usage: {final_features_matrix.data.nbytes / 1024 / 1024:.1f} MB")
+    
+    # Feature importance analysis if requested and target available
+    feature_names = (['tfidf_' + str(i) for i in range(content_tfidf.shape[1])] + 
+                    numerical_cols + 
+                    [f'cat_{i}' for i in range(categorical_combined.shape[1])])
+    
+    if analyze_importance and 'price' in df.columns:
+        importance_df = analyze_feature_importance(final_features_matrix, df['price'], feature_names)
+    else:
+        importance_df = None
+    
+    # Create summary dataframe
+    summary_cols = numerical_cols + ['IPQ_Unit_Type', 'category', 'brand', 'cluster_label']
+    feature_summary = df[[col for col in summary_cols if col in df.columns]].copy()
+    
+    return final_features_matrix, feature_summary, tfidf, importance_df
 
 if __name__ == "__main__":
+    print("🎯 Optimized Enhanced Text Feature Engineering Demo")
+    print("=" * 60)
+    
     DATASET_FOLDER = 'dataset'
-    TEST_DATA_PATH = os.path.join(DATASET_FOLDER, 'sample_test.csv') 
+    TEST_DATA_PATH = os.path.join(DATASET_FOLDER, 'sample_test.csv')
     
     if not os.path.exists(TEST_DATA_PATH):
-        print(f"Error: Could not find '{TEST_DATA_PATH}'. Please ensure files are in 'dataset/'.")
+        print(f"❌ Error: Could not find '{TEST_DATA_PATH}'")
+        print("   Please ensure files are in 'dataset/' folder")
     else:
+        print(f"📂 Loading data from: {TEST_DATA_PATH}")
         test_df = pd.read_csv(TEST_DATA_PATH)
+        print(f"   ✓ Loaded {len(test_df)} samples")
         
-        # --- EDA STEP: Extract and print unique units ---
-        print("--- EDA: Unique Raw Units for Mapping Refinement ---")
-        regex_value_unit = r"Value: (\d+\.?\d*)\nUnit: ([\w\s]+)\n"
-        extracted_features = test_df['catalog_content'].apply(lambda x: re.search(regex_value_unit, str(x)) if pd.notna(x) else None)
+        # Run optimized feature engineering
+        final_features, feature_summary, tfidf_vectorizer, importance_df = engineer_enhanced_text_features_optimized(
+            test_df, analyze_importance=False
+        )
         
-        # Get the raw unit and convert to lowercase for easy inspection
-        raw_units_series = extracted_features.apply(lambda x: x.group(2).lower() if x and x.group(2) else 'missing')
+        print("\n" + "=" * 60)
+        print("📋 FEATURE SUMMARY")
+        print("=" * 60)
+        print(feature_summary.head(10))
         
-        # Print all unique values
-        unique_raw_units = sorted(raw_units_series.unique())
-        print(f"Total unique raw units found: {len(unique_raw_units)}")
-        print(unique_raw_units) 
-        print("---------------------------------------------------\n")
-
-        # --- Proceed with Feature Engineering ---
-        final_text_features, ipq_structured_features = engineer_text_features(test_df)
+        print(f"\n🎯 OPTIMIZED FEATURE STATISTICS")
+        print(f"   • Total samples: {final_features.shape[0]}")
+        print(f"   • Total features: {final_features.shape[1]}")
+        print(f"   • Sparse matrix density: {final_features.nnz / (final_features.shape[0] * final_features.shape[1]):.4f}")
+        print(f"   • Memory usage: {final_features.data.nbytes / 1024 / 1024:.1f} MB")
         
-        print("\n--- Final Text Features Matrix Shape ---")
-        print(final_text_features.shape) 
+        # Show insights
+        print(f"\n📊 DATA INSIGHTS")
+        print(f"   • Products with dimensions: {feature_summary['volume_estimate'].gt(0).sum()}")
+        print(f"   • Products with premium indicators: {feature_summary['premium_count'].gt(0).sum()}")
+        print(f"   • Products with bulk indicators: {feature_summary['bulk_indicators'].gt(0).sum()}")
+        print(f"   • Strong brand products: {feature_summary['brand_strength'].sum()}")
+        print(f"   • Average text length: {feature_summary['char_count'].mean():.0f} chars")
+        print(f"   • Most common category: {feature_summary['category'].mode().iloc[0]}")
+        print(f"   • Number of clusters: {feature_summary['cluster_label'].nunique()}")
         
-        print("\n--- Sample of Advanced Structured IPQ Features ---")
-        print(ipq_structured_features.head())
+        print("\n✅ Optimized demo completed successfully!")
+        print("🚀 Ready for production use with improved performance and memory efficiency!")
