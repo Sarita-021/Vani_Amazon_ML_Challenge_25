@@ -93,3 +93,5 @@ mlruns/
 
 # Weights & Biases
 wandb/
+
+images/
