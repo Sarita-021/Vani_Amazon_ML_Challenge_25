@@ -1,8 +1,8 @@
 # ML Challenge 2025: Smart Product Pricing Solution
 
 **Team Name:** Vani  
-**Team Members:** Sarita, Gargi, Srushti Bhilare, Shendage Shraddha Sandeep
-**Submission Date:** January 2025
+**Team Members:** Sarita, Gargi
+**Submission Date:** 14 October, 2025
 
 ---
 
@@ -95,6 +95,42 @@ Image Features (2048+ dims) ──┘
 
 ## 6. Technical Implementation
 
+### 6.1 Execution Modes
+
+**🚀 FAST MODE** (Development & Testing)
+```bash
+python train_model_drive_fast.py
+```
+- Text-only features, 2-5 minute training
+- Uses: `models/fast_model.pkl`
+- Best for: Quick iterations, development
+
+**🎯 STANDARD MODE** (Production)
+```bash
+python data_setup.py
+python train_model.py train
+python train_model.py predict
+```
+- Multimodal features, 15-30 minute training
+- Uses: `models/trained_model.pkl`
+- Best for: Balanced accuracy vs speed
+
+**⚡ ADVANCED MODE** (Competition)
+```bash
+python train_advanced.py
+```
+- Deep learning features, 45-90 minute training
+- Best for: Maximum accuracy
+
+**☁️ CLOUD MODE** (Large Scale)
+```bash
+python train_model_drive.py
+```
+- Google Drive integration for 75k+ images
+- Memory-optimized batch processing
+
+### 6.2 Libraries & Optimization
+
 **Libraries Used:**
 - Feature Engineering: scikit-learn, spaCy, sentence-transformers
 - Image Processing: OpenCV, PIL, TensorFlow/Keras
@@ -106,6 +142,7 @@ Image Features (2048+ dims) ──┘
 - Batch processing for image feature extraction
 - Adaptive clustering for scalability
 - SMAPE-optimized loss function (L1/MAE)
+- Separate train/test workflows prevent data leakage
 
 ---
 
@@ -119,22 +156,50 @@ Our multimodal approach successfully combines textual product information with v
 
 ### A. Code Structure
 ```
-src/
-├── text_features.py     # Text feature engineering pipeline
-├── image_features.py    # Image feature extraction
-└── utils.py            # Image downloading utilities
-
-train_model.py          # Main training pipeline
-data_setup.py           # Data preparation
-sample_code.py          # Alternative prediction interface
+Vani_Amazon_ML_Challenge_25/
+├── dataset/
+│   ├── train.csv, test.csv     # Main datasets (75k each)
+│   └── test_out.csv           # Final submission file
+├── src/
+│   ├── text_features.py       # Advanced text processing
+│   ├── image_features.py      # Comprehensive image features
+│   ├── utils.py              # Image download utilities
+│   └── drive_utils.py        # Google Drive integration
+├── models/
+│   ├── trained_model.pkl     # Standard mode model
+│   ├── fast_model.pkl        # Fast mode model
+│   └── tfidf_vectorizer.pkl  # Text transformers
+├── images/
+│   ├── train/                # Training images (75k)
+│   └── test/                 # Test images (75k)
+├── train_model.py            # Standard mode pipeline
+├── train_model_drive_fast.py # Fast mode pipeline
+├── train_advanced.py         # Advanced mode pipeline
+├── train_model_drive.py      # Cloud mode pipeline
+├── data_setup.py            # Image organization
+└── workflow_example.py      # Automated workflow
 ```
 
-### B. Key Files for Reproduction
-- `train_model.py`: Complete training and prediction pipeline
-- `src/text_features.py`: Advanced text feature engineering
-- `src/image_features.py`: Comprehensive image feature extraction
-- Output: `dataset/predictions.csv` (rename to `test_out.csv` for submission)
+### B. Execution Workflow
+1. **Setup**: `source pricing_venv/bin/activate`
+2. **Choose Mode**: Fast/Standard/Advanced/Cloud based on requirements
+3. **Training**: Model learns from training data, saves components
+4. **Prediction**: Loads saved model, predicts on test data
+5. **Output**: `dataset/test_out.csv` ready for submission
+
+### C. Key Innovation: Separate Train/Predict Phases
+- **Training Phase**: Fits transformers only on training data
+- **Prediction Phase**: Loads saved components, applies to test data
+- **No Data Leakage**: Complete separation of training and test workflows
+- **Production Ready**: Train once, predict multiple times
 
 ---
 
-**Submission Ready:** This solution generates the required `test_out.csv` format and is optimized for the SMAPE evaluation metric used in the challenge.
+**Submission Ready:** All execution modes generate the required `test_out.csv` format optimized for SMAPE evaluation. Choose execution mode based on time constraints and accuracy requirements:
+
+| Mode | Time | Accuracy | Best For |
+|------|------|----------|----------|
+| Fast | 2-5 min | Good | Development, testing |
+| Standard | 15-30 min | Better | Production, balanced |
+| Advanced | 45-90 min | Best | Competition submission |
+| Cloud | Variable | Best | Large datasets, cloud processing |

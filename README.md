@@ -227,44 +227,64 @@ source pricing_venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### **Step-by-Step Workflow**
+### **Execution Modes by Complexity**
 
-#### **1. Download Images (Separate Train/Test Folders)**
+#### **🚀 FAST MODE (Recommended for Quick Testing)**
+**Best for:** Initial testing, development, small datasets
 ```bash
+# Complete pipeline with optimized features
+python train_model_drive_fast.py
+```
+**Features:**
+- Text-only features (no image processing)
+- Fast TF-IDF + basic numerical features
+- Quick training (~2-5 minutes)
+- Uses: `models/fast_model.pkl`
+
+#### **🎯 STANDARD MODE (Balanced Performance)**
+**Best for:** Production use, balanced accuracy vs speed
+```bash
+# 1. Download images to separate folders
 python data_setup.py
-```
-**Creates:**
-- `images/train/` - Training images (75k images)
-- `images/test/` - Test images (75k images)
 
-#### **2. Train Model (Learning Phase)**
-```bash
+# 2. Train model (saves components)
 python train_model.py train
-```
-**Process:**
-- Loads training data with prices
-- Extracts text and image features from training data
-- Fits all transformers (TF-IDF, scalers) on training data only
-- Trains LightGBM model
-- **Saves learned components:**
-  - `models/trained_model.pkl`
-  - `models/tfidf_vectorizer.pkl`
-  - `models/model_metadata.pkl`
 
-#### **3. Generate Predictions (Inference Phase)**
-```bash
+# 3. Generate predictions
 python train_model.py predict
 ```
-**Process:**
-- Loads test data (no prices)
-- **Loads saved model components**
-- Extracts features using trained transformers (no re-fitting)
-- Generates predictions on test data
-- **Creates:** `dataset/test_out.csv` (submission file)
+**Features:**
+- Multimodal: Text + Image features
+- Advanced feature engineering
+- Training time: ~15-30 minutes
+- Uses: `models/trained_model.pkl`
+
+#### **⚡ ADVANCED MODE (Maximum Accuracy)**
+**Best for:** Competition submission, maximum performance
+```bash
+# Complete advanced pipeline
+python train_advanced.py
+```
+**Features:**
+- Deep learning image features (ResNet50)
+- Semantic text clustering
+- Ensemble methods
+- Training time: ~45-90 minutes
+
+#### **☁️ CLOUD MODE (Google Drive Integration)**
+**Best for:** Large datasets, cloud processing
+```bash
+# Cloud-optimized pipeline
+python train_model_drive.py
+```
+**Features:**
+- Google Drive integration
+- Batch processing for large datasets
+- Memory-optimized for 75k+ images
 
 ### **Alternative Execution Options**
 
-#### **Complete Pipeline (Train + Predict)**
+#### **Complete Standard Pipeline**
 ```bash
 python train_model.py full
 ```
@@ -285,19 +305,43 @@ python workflow_example.py
 ### **File Structure After Execution**
 ```
 Vani_Amazon_ML_Challenge_25/
-├── images/
-│   ├── train/          # Training images (75k)
-│   └── test/           # Test images (75k)
-├── models/
-│   ├── trained_model.pkl
-│   ├── tfidf_vectorizer.pkl
-│   └── model_metadata.pkl
 ├── dataset/
-│   └── test_out.csv    # Final submission file
+│   ├── train.csv           # Training data (75k samples)
+│   ├── test.csv            # Test data (75k samples)
+│   ├── sample_train.csv    # Sample training data
+│   ├── sample_test.csv     # Sample test data
+│   └── test_out.csv        # Final submission file
+├── images/
+│   ├── train/              # Training images (75k)
+│   └── test/               # Test images (75k)
+├── models/
+│   ├── trained_model.pkl   # Standard mode model
+│   ├── tfidf_vectorizer.pkl
+│   ├── model_metadata.pkl
+│   ├── fast_model.pkl      # Fast mode model
+│   ├── fast_vectorizer.pkl
+│   └── fast_brand_encoder.pkl
+├── src/
+│   ├── text_features.py    # Text feature engineering
+│   ├── image_features.py   # Image feature extraction
+│   ├── utils.py           # Utility functions
+│   └── drive_utils.py     # Google Drive utilities
+└── pricing_venv/          # Virtual environment
 ```
+
+### **Mode Selection Guide**
+
+| Mode | Time | Accuracy | Use Case |
+|------|------|----------|----------|
+| **Fast** | 2-5 min | Good | Development, testing |
+| **Standard** | 15-30 min | Better | Production, balanced |
+| **Advanced** | 45-90 min | Best | Competition, max accuracy |
+| **Cloud** | Variable | Best | Large datasets, cloud |
 
 ### **Troubleshooting**
 
-**Memory Issues:** Use Google Colab Pro or Kaggle Notebooks for processing 75k images  
-**Image Download Failures:** Re-run `data_setup.py` - it handles retries automatically  
-**Model Loading Errors:** Ensure training completed successfully before prediction phase
+**Memory Issues:** Use Fast Mode or Google Colab Pro for large datasets  
+**Image Download Failures:** Re-run `data_setup.py` - handles retries automatically  
+**Model Loading Errors:** Ensure training completed before prediction phase  
+**Slow Performance:** Start with Fast Mode, then upgrade to Standard/Advanced  
+**Missing Dependencies:** Run `pip install -r requirements.txt` in virtual environment
