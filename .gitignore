@@ -87,3 +87,8 @@ mlruns/
 
 # Weights & Biases
 wandb/
+
+# Sensitive configuration files
+credentials.json
+config.py
+*.json
