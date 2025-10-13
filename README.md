@@ -217,6 +217,9 @@ Participants are **STRICTLY NOT ALLOWED** to obtain prices from the internet, ex
 
 ### **Prerequisites**
 ```bash
+# Creaate virtual environment 
+python3 -m venv pricing_venv
+
 # Activate virtual environment
 source pricing_venv/bin/activate
 
