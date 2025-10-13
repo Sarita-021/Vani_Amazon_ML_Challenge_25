@@ -119,7 +119,7 @@ def extract_price_indicators(text):
         'brand_strength': 1 if any(brand in text for brand in STRONG_BRANDS) else 0
     }
 
-def cluster_similar_products_optimized(df, text_column="catalog_content", n_clusters=None):
+def cluster_similar_products_optimized(df, text_column="catalog_content", n_clusters=None, fitted_model=None):
     """Optimized semantic clustering with adaptive cluster count"""
     print("🔹 Running optimized semantic clustering...")
     df = df.copy()
@@ -135,8 +135,12 @@ def cluster_similar_products_optimized(df, text_column="catalog_content", n_clus
     embeddings = model.encode(texts, batch_size=512, show_progress_bar=True)
     
     # Use MiniBatchKMeans for better performance
-    kmeans = MiniBatchKMeans(n_clusters=n_clusters, random_state=42, batch_size=1000)
-    cluster_labels = kmeans.fit_predict(embeddings)
+    if fitted_model is None:
+        kmeans = MiniBatchKMeans(n_clusters=n_clusters, random_state=42, batch_size=1000)
+        cluster_labels = kmeans.fit_predict(embeddings)
+    else:
+        kmeans = fitted_model
+        cluster_labels = kmeans.predict(embeddings)
     df["cluster_label"] = cluster_labels
     
     # Generate cluster keywords using TF-IDF
@@ -157,7 +161,7 @@ def cluster_similar_products_optimized(df, text_column="catalog_content", n_clus
     df["cluster_keywords"] = df["cluster_label"].map(cluster_keywords)
     
     print(f"   ✓ Created {n_clusters} clusters with {len(embeddings)} products")
-    return df, embeddings, cluster_keywords
+    return df, embeddings, cluster_keywords, kmeans
 
 def create_price_range_features(df, cluster_col='cluster_label'):
     """Create price-based cluster statistics for training data"""
@@ -268,7 +272,7 @@ def analyze_feature_importance(X, y, feature_names, top_n=20):
     return importance_df
 
 def engineer_text_features(df: pd.DataFrame, fit_tfidf=True, tfidf_vectorizer=None, 
-                                            cluster_stats=None, analyze_importance=False):
+                                            cluster_stats=None, analyze_importance=False, feature_columns=None):
     """
     Optimized enhanced text feature engineering
     """
@@ -301,7 +305,19 @@ def engineer_text_features(df: pd.DataFrame, fit_tfidf=True, tfidf_vectorizer=No
     df['category'] = df['catalog_content'].apply(extract_category)
     
     # 3. Optimized semantic clustering
-    df, embeddings, cluster_keywords = cluster_similar_products_optimized(df, text_column='catalog_content')
+    if fit_tfidf:
+        df, embeddings, cluster_keywords, kmeans_model = cluster_similar_products_optimized(df, text_column='catalog_content')
+        # Store clustering model
+        feature_columns = {'kmeans_model': kmeans_model}
+        print(f"   🔍 DEBUG - Training clusters created: {df['cluster_label'].nunique()}")
+    else:
+        if feature_columns is None or 'kmeans_model' not in feature_columns:
+            raise ValueError("feature_columns with kmeans_model must be provided when fit_tfidf=False")
+        df, embeddings, cluster_keywords, _ = cluster_similar_products_optimized(
+            df, text_column='catalog_content', fitted_model=feature_columns['kmeans_model']
+        )
+        print(f"   🔍 DEBUG - Test clusters assigned: {df['cluster_label'].nunique()}")
+        print(f"   🔍 DEBUG - Test cluster range: {df['cluster_label'].min()} to {df['cluster_label'].max()}")
     
     # 4. Create price range features if training data
     df = create_price_range_features(df)
@@ -353,20 +369,63 @@ def engineer_text_features(df: pd.DataFrame, fit_tfidf=True, tfidf_vectorizer=No
         tfidf = tfidf_vectorizer
         print(f"   ✓ TF-IDF transformed with {content_tfidf.shape[1]} features")
     
-    # 10. Create categorical features
+    # 10. Create categorical features with consistent columns
     print("🏗️  Creating categorical features...")
     categorical_features = []
     
-    unit_type_dummies = pd.get_dummies(df['IPQ_Unit_Type'], prefix='Unit')
-    category_dummies = pd.get_dummies(df['category'], prefix='Cat')
-    cluster_dummies = pd.get_dummies(df['cluster_label'], prefix='Cluster')
-    
-    # Top brands only
-    top_brands = df['brand'].value_counts().head(5).index
-    for brand in top_brands:
-        df[f'Brand_{brand}'] = (df['brand'] == brand).astype(int)
-    
-    categorical_features.extend([unit_type_dummies, category_dummies, cluster_dummies])
+    if fit_tfidf:
+        # Training: create and store feature columns
+        unit_type_dummies = pd.get_dummies(df['IPQ_Unit_Type'], prefix='Unit')
+        category_dummies = pd.get_dummies(df['category'], prefix='Cat')
+        cluster_dummies = pd.get_dummies(df['cluster_label'], prefix='Cluster')
+        
+        # Top brands only
+        top_brands = df['brand'].value_counts().head(5).index
+        for brand in top_brands:
+            df[f'Brand_{brand}'] = (df['brand'] == brand).astype(int)
+        
+        # Store feature columns for test consistency
+        feature_columns.update({
+            'unit_types': unit_type_dummies.columns.tolist(),
+            'categories': category_dummies.columns.tolist(), 
+            'clusters': cluster_dummies.columns.tolist(),
+            'brands': [f'Brand_{brand}' for brand in top_brands]
+        })
+        
+        categorical_features.extend([unit_type_dummies, category_dummies, cluster_dummies])
+    else:
+        # Test: use stored feature columns for consistency
+        if feature_columns is None:
+            raise ValueError("feature_columns must be provided when fit_tfidf=False")
+        
+        # Create dummies with consistent columns
+        unit_type_dummies = pd.get_dummies(df['IPQ_Unit_Type'], prefix='Unit')
+        for col in feature_columns['unit_types']:
+            if col not in unit_type_dummies.columns:
+                unit_type_dummies[col] = 0
+        unit_type_dummies = unit_type_dummies[feature_columns['unit_types']]
+        
+        category_dummies = pd.get_dummies(df['category'], prefix='Cat')
+        for col in feature_columns['categories']:
+            if col not in category_dummies.columns:
+                category_dummies[col] = 0
+        category_dummies = category_dummies[feature_columns['categories']]
+        
+        cluster_dummies = pd.get_dummies(df['cluster_label'], prefix='Cluster')
+        print(f"   🔍 DEBUG - Test cluster dummies created: {list(cluster_dummies.columns)}")
+        print(f"   🔍 DEBUG - Expected cluster columns: {feature_columns['clusters']}")
+        for col in feature_columns['clusters']:
+            if col not in cluster_dummies.columns:
+                cluster_dummies[col] = 0
+        cluster_dummies = cluster_dummies[feature_columns['clusters']]
+        print(f"   🔍 DEBUG - Final cluster dummies shape: {cluster_dummies.shape}")
+        
+        # Brand features
+        for brand_col in feature_columns['brands']:
+            brand = brand_col.replace('Brand_', '')
+            df[brand_col] = (df['brand'] == brand).astype(int)
+        
+        categorical_features.extend([unit_type_dummies, category_dummies, cluster_dummies])
     
     # 11. Combine all features
     print("🔗 Combining all features...")
@@ -382,30 +441,47 @@ def engineer_text_features(df: pd.DataFrame, fit_tfidf=True, tfidf_vectorizer=No
         numerical_cols.extend(['cluster_price_mean', 'cluster_price_std', 'cluster_size'])
     
     # Add brand features
-    brand_cols = [col for col in df.columns if col.startswith('Brand_')]
+    if fit_tfidf:
+        brand_cols = [col for col in df.columns if col.startswith('Brand_')]
+    else:
+        brand_cols = feature_columns['brands']
     numerical_cols.extend(brand_cols)
     
-    numerical_features_array = df[numerical_cols].fillna(0).values
-    categorical_combined = np.hstack([cat_df.values for cat_df in categorical_features])
+    numerical_features_array = df[numerical_cols].fillna(0).values.astype(np.float64)
     
-    # Memory-optimized feature combination
-    dense_features = np.hstack([numerical_features_array, categorical_combined])
-    final_features_matrix = hstack([content_tfidf, dense_features])
+    # Handle categorical features safely
+    if categorical_features:
+        categorical_arrays = [cat_df.values for cat_df in categorical_features]
+        categorical_combined = np.hstack(categorical_arrays).astype(np.float64)
+        # Memory-optimized feature combination
+        dense_features = np.hstack([numerical_features_array, categorical_combined]).astype(np.float64)
+    else:
+        categorical_combined = np.array([]).reshape(len(df), 0)
+        dense_features = numerical_features_array
+    final_features_matrix = hstack([content_tfidf, csr_matrix(dense_features)])
     
-    # Convert to CSR for memory efficiency
-    final_features_matrix = csr_matrix(final_features_matrix)
+    # Convert to dense array for LightGBM compatibility
+    final_features_matrix = final_features_matrix.toarray()
     
     print(f"✅ Optimized feature engineering complete!")
     print(f"   📏 Final feature matrix shape: {final_features_matrix.shape}")
     print(f"   📊 TF-IDF features: {content_tfidf.shape[1]}")
     print(f"   🔢 Numerical features: {len(numerical_cols)}")
-    print(f"   🏷️  Categorical features: {categorical_combined.shape[1]}")
-    print(f"   💾 Memory usage: {final_features_matrix.data.nbytes / 1024 / 1024:.1f} MB")
+    print(f"   🏷️  Categorical features: {categorical_combined.shape[1] if categorical_features else 0}")
+    print(f"   💾 Memory usage: {final_features_matrix.nbytes / 1024 / 1024:.1f} MB")
+    
+    # Debug feature dimensions
+    if not fit_tfidf:
+        print(f"   🔍 DEBUG - Dense features shape: {dense_features.shape}")
+        print(f"   🔍 DEBUG - Content TF-IDF shape: {content_tfidf.shape}")
+        print(f"   🔍 DEBUG - Numerical array shape: {numerical_features_array.shape}")
+        if categorical_features:
+            print(f"   🔍 DEBUG - Categorical combined shape: {categorical_combined.shape}")
     
     # Feature importance analysis if requested and target available
     feature_names = (['tfidf_' + str(i) for i in range(content_tfidf.shape[1])] + 
                     numerical_cols + 
-                    [f'cat_{i}' for i in range(categorical_combined.shape[1])])
+                    ([f'cat_{i}' for i in range(categorical_combined.shape[1])] if categorical_features else []))
     
     if analyze_importance and 'price' in df.columns:
         importance_df = analyze_feature_importance(final_features_matrix, df['price'], feature_names)
@@ -416,15 +492,18 @@ def engineer_text_features(df: pd.DataFrame, fit_tfidf=True, tfidf_vectorizer=No
     summary_cols = numerical_cols + ['IPQ_Unit_Type', 'category', 'brand', 'cluster_label']
     feature_summary = df[[col for col in summary_cols if col in df.columns]].copy()
     
-    return final_features_matrix, feature_summary, tfidf, importance_df
+    if fit_tfidf:
+        return final_features_matrix, feature_summary, tfidf, feature_columns
+    else:
+        return final_features_matrix, feature_summary, tfidf, None
 
 if __name__ == "__main__":
     print("🎯 Text Feature Engineering for Production")
     print("=" * 60)
     
     DATASET_FOLDER = 'dataset'
-    TRAIN_DATA_PATH = os.path.join(DATASET_FOLDER, 'train.csv')
-    TEST_DATA_PATH = os.path.join(DATASET_FOLDER, 'test.csv')
+    TRAIN_DATA_PATH = os.path.join(DATASET_FOLDER, 'sample_train.csv')
+    TEST_DATA_PATH = os.path.join(DATASET_FOLDER, 'sample_test.csv')
     
     # Load training data for fitting transformers
     if os.path.exists(TRAIN_DATA_PATH):
@@ -433,7 +512,7 @@ if __name__ == "__main__":
         print(f"   ✓ Loaded {len(train_df)} training samples")
         
         # Fit on training data
-        train_features, _, tfidf_vectorizer, _ = engineer_text_features(
+        train_features, _, tfidf_vectorizer, feature_columns = engineer_text_features(
             train_df, fit_tfidf=True, analyze_importance=False
         )
         print(f"   ✓ Training features shape: {train_features.shape}")
@@ -445,11 +524,11 @@ if __name__ == "__main__":
             print(f"   ✓ Loaded {len(test_df)} test samples")
             
             test_features, _, _, _ = engineer_text_features(
-                test_df, fit_tfidf=False, tfidf_vectorizer=tfidf_vectorizer
+                test_df, fit_tfidf=False, tfidf_vectorizer=tfidf_vectorizer, feature_columns=feature_columns
             )
             print(f"   ✓ Test features shape: {test_features.shape}")
     else:
-        print(f"❌ Error: Could not find train.csv in 'dataset/' folder")
+        print(f"❌ Error: Could not find sample_train.csv in 'dataset/' folder")
         exit()
         
         # Run optimized feature engineering

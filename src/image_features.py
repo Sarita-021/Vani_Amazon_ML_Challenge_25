@@ -140,7 +140,7 @@ def load_and_preprocess_image(image_path):
     except Exception as e:
         return None
 
-def extract_deep_features(df, model_name='resnet50', batch_size=32):
+def extract_deep_features(df, model_name='resnet50', batch_size=32, images_folder='images'):
     """Extract deep features using multiple CNN architectures"""
     if not TF_AVAILABLE:
         print("❌ TensorFlow not available. Returning zero features.")
@@ -167,7 +167,7 @@ def extract_deep_features(df, model_name='resnet50', batch_size=32):
     for link in df['image_link']:
         if pd.notna(link):
             filename = os.path.basename(link)
-            image_paths.append(os.path.join(IMAGE_DOWNLOAD_FOLDER, filename))
+            image_paths.append(os.path.join(images_folder, filename))
         else:
             image_paths.append(None)
     
@@ -195,7 +195,7 @@ def extract_deep_features(df, model_name='resnet50', batch_size=32):
     print(f"✅ Deep feature extraction complete. Shape: {features.shape}")
     return features
 
-def extract_comprehensive_image_features(df: pd.DataFrame, use_deep_features=True, model_name='resnet50'):
+def extract_comprehensive_image_features(df: pd.DataFrame, use_deep_features=True, model_name='resnet50', images_folder='images'):
     """
     Extract comprehensive image features for price prediction
     """
@@ -206,7 +206,7 @@ def extract_comprehensive_image_features(df: pd.DataFrame, use_deep_features=Tru
     for link in df['image_link']:
         if pd.notna(link):
             filename = os.path.basename(link)
-            image_paths.append(os.path.join(IMAGE_DOWNLOAD_FOLDER, filename))
+            image_paths.append(os.path.join(images_folder, filename))
         else:
             image_paths.append(None)
     
@@ -254,7 +254,7 @@ def extract_comprehensive_image_features(df: pd.DataFrame, use_deep_features=Tru
     
     # Extract deep features if requested
     if use_deep_features:
-        deep_features = extract_deep_features(df, model_name=model_name)
+        deep_features = extract_deep_features(df, model_name=model_name, images_folder=images_folder)
         
         # Combine traditional and deep features
         final_features = np.hstack([traditional_features, deep_features])
@@ -284,8 +284,8 @@ if __name__ == "__main__":
     print("=" * 50)
     
     DATASET_FOLDER = 'dataset'
-    TRAIN_DATA_PATH = os.path.join(DATASET_FOLDER, 'train.csv')
-    TEST_DATA_PATH = os.path.join(DATASET_FOLDER, 'test.csv')
+    TRAIN_DATA_PATH = os.path.join(DATASET_FOLDER, 'sample_train.csv')
+    TEST_DATA_PATH = os.path.join(DATASET_FOLDER, 'sample_test.csv')
     
     if not os.path.exists(IMAGE_DOWNLOAD_FOLDER):
         print(f"❌ Error: Image folder '{IMAGE_DOWNLOAD_FOLDER}' not found.")
@@ -315,7 +315,7 @@ if __name__ == "__main__":
             )
             print(f"   ✓ Test features shape: {test_features.shape}")
     else:
-        print(f"❌ Error: Could not find train.csv in 'dataset/' folder")
+        print(f"❌ Error: Could not find sample_train.csv in 'dataset/' folder")
         exit()
         
         # Extract comprehensive features
