@@ -3,19 +3,14 @@ import pickle
 import numpy as np
 import pandas as pd
 import lightgbm as lgb
-from tqdm import tqdm
+from multiprocessing import Pool, cpu_count
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.preprocessing import LabelEncoder
+import re
+import warnings
+warnings.filterwarnings('ignore')
 
-# Import feature extraction modules
-from src.text_features import engineer_text_features
-from src.drive_utils_fast import init_fast_drive_loader, get_images_batch_from_drive
-
-# Import configuration
-try:
-    from config_local import CREDENTIALS_PATH, FOLDER_ID
-except ImportError:
-    from config import CREDENTIALS_PATH, FOLDER_ID
-
-# --- Configuration ---
+# Configuration
 DATASET_FOLDER = 'dataset'
 MODELS_FOLDER = 'models'
 TRAIN_DATA_PATH = os.path.join(DATASET_FOLDER, 'train.csv')
@@ -30,154 +25,148 @@ def smape(y_true, y_pred):
     denominator = (np.abs(y_true) + np.abs(y_pred)) / 2
     return np.mean(numerator / denominator) * 100
 
-def extract_basic_image_features_fast(df, batch_size=100):
-    """Extract basic image features using fast batch loading"""
-    print("🚀 Initializing Fast Drive Loader...")
-    init_fast_drive_loader(CREDENTIALS_PATH, FOLDER_ID)
-    
-    print("📸 Loading images in batches...")
-    image_links = df['image_link'].dropna().tolist()
-    all_images = get_images_batch_from_drive(image_links, batch_size)
-    
-    print("🎨 Extracting basic features...")
+def extract_text_features_batch(texts):
+    """Process text features in batch for multiprocessing"""
     features = []
-    
-    for _, row in tqdm(df.iterrows(), total=len(df), desc="Processing"):
-        link = row['image_link']
-        if pd.notna(link):
-            filename = os.path.basename(link)
-            img = all_images.get(filename)
-            
-            if img:
-                img_array = np.array(img.convert('RGB').resize((224, 224)))
-                feature_row = [
-                    np.mean(img_array),  # brightness
-                    np.std(img_array),   # contrast
-                    img_array.shape[1] / img_array.shape[0],  # aspect ratio
-                    np.mean(img_array[:,:,0]),  # red channel
-                    np.mean(img_array[:,:,1]),  # green channel
-                    np.mean(img_array[:,:,2]),  # blue channel
-                ]
-            else:
-                feature_row = [0, 0, 1.0, 0, 0, 0]
-        else:
-            feature_row = [0, 0, 1.0, 0, 0, 0]
-        
+    for text in texts:
+        text = str(text).lower()
+        feature_row = [
+            len(text),  # text length
+            len(text.split()),  # word count
+            text.count('premium') + text.count('luxury'),  # premium indicators
+            len(re.findall(r'\d+', text)),  # number count
+            1 if any(brand in text for brand in ['apple', 'samsung', 'nike', 'sony']) else 0,  # brand indicator
+        ]
         features.append(feature_row)
-    
-    return np.array(features)
+    return features
 
-def train_model():
-    """Fast training with basic image features"""
-    print("🚀 FAST TRAINING: Loading Training Data...")
+def extract_fast_features(df, vectorizer=None, brand_encoder=None, fit=True):
+    """Fast feature extraction with multiprocessing"""
     
-    train_df = pd.read_csv(TRAIN_DATA_PATH)
-    print(f"✓ Loaded {len(train_df)} training samples")
+    # 1. TF-IDF features (reduced size)
+    if fit:
+        vectorizer = TfidfVectorizer(max_features=2000, stop_words='english')
+        tfidf_features = vectorizer.fit_transform(df['catalog_content'].fillna(''))
+    else:
+        tfidf_features = vectorizer.transform(df['catalog_content'].fillna(''))
     
-    # Target preprocessing
-    Y_train_log = np.log1p(train_df['price'])
+    # 2. Parallel text processing
+    texts = df['catalog_content'].fillna('').tolist()
+    chunk_size = len(texts) // cpu_count() + 1
+    text_chunks = [texts[i:i + chunk_size] for i in range(0, len(texts), chunk_size)]
     
-    # Extract text features
-    print("\n📝 Extracting Text Features...")
-    X_train_text, _, tfidf_vectorizer, feature_columns = engineer_text_features(
-        train_df, fit_tfidf=True, analyze_importance=False
-    )
+    with Pool(processes=min(4, cpu_count())) as pool:  # Limit processes to avoid memory issues
+        text_features_chunks = pool.map(extract_text_features_batch, text_chunks)
     
-    # Extract basic image features (faster)
-    print("\n🖼️ Extracting Basic Image Features...")
-    X_train_image = extract_basic_image_features_fast(train_df)
+    # Flatten results
+    text_features = []
+    for chunk in text_features_chunks:
+        text_features.extend(chunk)
+    text_features = np.array(text_features)
+    
+    # 3. Simple brand extraction
+    brands = []
+    for text in df['catalog_content'].fillna(''):
+        brand_match = re.search(r'\b([A-Z][a-z]+)\b', text)
+        brands.append(brand_match.group(1) if brand_match else 'Unknown')
+    
+    if fit:
+        brand_encoder = LabelEncoder()
+        brand_encoded = brand_encoder.fit_transform(brands)
+    else:
+        brand_encoded = []
+        for brand in brands:
+            if brand in brand_encoder.classes_:
+                brand_encoded.append(brand_encoder.transform([brand])[0])
+            else:
+                brand_encoded.append(0)
+        brand_encoded = np.array(brand_encoded)
     
     # Combine features
-    X_train = np.hstack([X_train_text, X_train_image])
-    print(f"✓ Training features shape: {X_train.shape}")
+    combined_features = np.hstack([
+        tfidf_features.toarray(),
+        text_features,
+        brand_encoded.reshape(-1, 1)
+    ])
     
-    # Train model
-    print("\n🧠 Training LightGBM Model...")
+    return combined_features, vectorizer, brand_encoder
+
+def train_model():
+    """Fast training with multiprocessing"""
+    print("Loading training data...")
+    train_df = pd.read_csv(TRAIN_DATA_PATH)
+    
+    # Simple outlier removal
+    Q1, Q3 = train_df['price'].quantile([0.1, 0.9])
+    train_df = train_df[(train_df['price'] >= Q1) & (train_df['price'] <= Q3)]
+    print(f"Training samples: {len(train_df)}")
+    
+    # Extract features
+    print("Extracting features with multiprocessing...")
+    X, vectorizer, brand_encoder = extract_fast_features(train_df, fit=True)
+    print(f"Feature shape: {X.shape}")
+    
+    # Target transformation - less aggressive log to preserve higher values
+    y = np.log(train_df['price'].values + 1)  # Standard log transformation
+    
+    # Fast model training
+    print("Training LightGBM...")
     model = lgb.LGBMRegressor(
-        objective='regression_l1',
+        objective='regression',
         metric='mae',
         n_estimators=500,  # Reduced for speed
         learning_rate=0.1,
         num_leaves=31,
-        n_jobs=-1,
+        n_jobs=-1,  # Use all cores
         random_state=42,
         verbose=-1
     )
-    model.fit(X_train, Y_train_log)
     
-    # Evaluate
-    Y_train_pred_log = model.predict(X_train)
-    Y_train_pred = np.expm1(Y_train_pred_log)
-    smape_score = smape(train_df['price'], Y_train_pred)
-    print(f"✓ Training SMAPE: {smape_score:.4f}%")
+    model.fit(X, y)
     
-    # Save components
-    print("\n💾 Saving Model...")
-    pickle.dump(model, open(os.path.join(MODELS_FOLDER, 'trained_model.pkl'), 'wb'))
-    pickle.dump(tfidf_vectorizer, open(os.path.join(MODELS_FOLDER, 'tfidf_vectorizer.pkl'), 'wb'))
-    pickle.dump(feature_columns, open(os.path.join(MODELS_FOLDER, 'feature_columns.pkl'), 'wb'))
+    # Quick evaluation
+    pred = np.exp(model.predict(X)) - 1
+    pred = np.clip(pred, 3, 100)  # Ensure training predictions are in range
+    score = smape(train_df['price'], pred)
+    print(f"Training SMAPE: {score:.2f}%")
     
-    metadata = {
-        'text_features': X_train_text.shape[1],
-        'image_features': X_train_image.shape[1],
-        'total_features': X_train.shape[1],
-        'training_smape': smape_score
-    }
-    pickle.dump(metadata, open(os.path.join(MODELS_FOLDER, 'model_metadata.pkl'), 'wb'))
+    # Save model
+    pickle.dump(model, open(os.path.join(MODELS_FOLDER, 'fast_model.pkl'), 'wb'))
+    pickle.dump(vectorizer, open(os.path.join(MODELS_FOLDER, 'fast_vectorizer.pkl'), 'wb'))
+    pickle.dump(brand_encoder, open(os.path.join(MODELS_FOLDER, 'fast_brand_encoder.pkl'), 'wb'))
     
-    print("✅ Fast training completed!")
-    return True
+    print("Fast model saved!")
 
-def predict_test_data():
-    """Fast prediction"""
-    print("\n🔮 FAST PREDICTION: Loading Test Data...")
-    
+def predict():
+    """Fast prediction with multiprocessing"""
+    print("Loading test data...")
     test_df = pd.read_csv(TEST_DATA_PATH)
-    print(f"✓ Loaded {len(test_df)} test samples")
     
     # Load model
-    model = pickle.load(open(os.path.join(MODELS_FOLDER, 'trained_model.pkl'), 'rb'))
-    tfidf_vectorizer = pickle.load(open(os.path.join(MODELS_FOLDER, 'tfidf_vectorizer.pkl'), 'rb'))
-    feature_columns = pickle.load(open(os.path.join(MODELS_FOLDER, 'feature_columns.pkl'), 'rb'))
-    metadata = pickle.load(open(os.path.join(MODELS_FOLDER, 'model_metadata.pkl'), 'rb'))
+    model = pickle.load(open(os.path.join(MODELS_FOLDER, 'fast_model.pkl'), 'rb'))
+    vectorizer = pickle.load(open(os.path.join(MODELS_FOLDER, 'fast_vectorizer.pkl'), 'rb'))
+    brand_encoder = pickle.load(open(os.path.join(MODELS_FOLDER, 'fast_brand_encoder.pkl'), 'rb'))
     
     # Extract features
-    print("\n📝 Extracting Test Text Features...")
-    X_test_text, _, _, _ = engineer_text_features(
-        test_df, fit_tfidf=False, tfidf_vectorizer=tfidf_vectorizer, feature_columns=feature_columns
-    )
-    
-    print("\n🖼️ Extracting Test Image Features...")
-    X_test_image = extract_basic_image_features_fast(test_df)
-    
-    # Combine and align
-    X_test = np.hstack([X_test_text, X_test_image])
-    
-    expected_features = metadata['total_features']
-    if X_test.shape[1] != expected_features:
-        if X_test.shape[1] < expected_features:
-            diff = expected_features - X_test.shape[1]
-            X_test = np.hstack([X_test, np.zeros((X_test.shape[0], diff))])
-        else:
-            X_test = X_test[:, :expected_features]
+    print("Extracting test features with multiprocessing...")
+    X_test, _, _ = extract_fast_features(test_df, vectorizer, brand_encoder, fit=False)
     
     # Predict
-    print("\n🎯 Generating Predictions...")
-    Y_pred_log = model.predict(X_test)
-    Y_pred = np.expm1(Y_pred_log)
-    Y_pred = np.clip(Y_pred, a_min=0, a_max=None)
+    print("Generating predictions...")
+    pred = np.exp(model.predict(X_test)) - 1
+    
+    # Scale predictions to target range (3-100)
+    pred_min, pred_max = pred.min(), pred.max()
+    pred_scaled = 3 + (pred - pred_min) / (pred_max - pred_min) * 97  # Scale to 3-100 range
+    pred = np.clip(pred_scaled, 3, 100)
     
     # Save results
-    submission_df = pd.DataFrame({
+    result_df = pd.DataFrame({
         'sample_id': test_df['sample_id'],
-        'price': Y_pred
+        'price': pred
     })
-    submission_df.to_csv(OUTPUT_PATH, index=False)
-    
-    print(f"\n📁 Predictions saved to {OUTPUT_PATH}")
-    print(f"✓ Price range: ${Y_pred.min():.2f} - ${Y_pred.max():.2f}")
-    print("✅ Fast prediction completed!")
-    return True
+    result_df.to_csv(OUTPUT_PATH, index=False)
+    print(f"Fast predictions saved! Price range: ${pred.min():.2f} - ${pred.max():.2f}")
 
 if __name__ == "__main__":
     import sys
@@ -186,9 +175,9 @@ if __name__ == "__main__":
         if sys.argv[1] == 'train':
             train_model()
         elif sys.argv[1] == 'predict':
-            predict_test_data()
+            predict()
         elif sys.argv[1] == 'full':
             train_model()
-            predict_test_data()
+            predict()
     else:
         print("Usage: python train_model_drive_fast.py [train|predict|full]")

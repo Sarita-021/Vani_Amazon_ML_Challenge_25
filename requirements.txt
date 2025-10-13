@@ -169,16 +169,16 @@ python-dateutil
 python-docx
 python-json-logger
 pytz
-pywin32
-pywin32-ctypes
-pywinpty
+# pywin32  # Windows only
+# pywin32-ctypes  # Windows only
+# pywinpty  # Windows only
 PyYAML
 pyzmq
 qrcode
 redis
 referencing
 regex
-reportlab
+# reportlab  # Requires system dependencies
 requests
 requests-oauthlib
 rfc3339-validator
@@ -215,13 +215,13 @@ sqlparse
 srsly
 stack-data
 statsmodels
-svglib
+# svglib  # Requires pycairo system dependencies
 sympy
 tensorboard
 tensorboard-data-server
 tensorflow
-tensorflow-io-gcs-filesystem
-tensorflow_intel
+# tensorflow-io-gcs-filesystem  # Not available on macOS
+# tensorflow_intel  # Windows/Intel specific
 termcolor
 terminado
 tf_keras
@@ -256,6 +256,6 @@ websocket-client
 Werkzeug
 widgetsnbextension
 wrapt
-xhtml2pdf
+# xhtml2pdf  # Requires reportlab/svglib
 zipp
 zstandard
