@@ -502,8 +502,8 @@ if __name__ == "__main__":
     print("=" * 60)
     
     DATASET_FOLDER = 'dataset'
-    TRAIN_DATA_PATH = os.path.join(DATASET_FOLDER, 'sample_train.csv')
-    TEST_DATA_PATH = os.path.join(DATASET_FOLDER, 'sample_test.csv')
+    TRAIN_DATA_PATH = os.path.join(DATASET_FOLDER, 'train.csv')
+    TEST_DATA_PATH = os.path.join(DATASET_FOLDER, 'test.csv')
     
     # Load training data for fitting transformers
     if os.path.exists(TRAIN_DATA_PATH):
@@ -528,7 +528,7 @@ if __name__ == "__main__":
             )
             print(f"   ✓ Test features shape: {test_features.shape}")
     else:
-        print(f"❌ Error: Could not find sample_train.csv in 'dataset/' folder")
+        print(f"❌ Error: Could not find train.csv in 'dataset/' folder")
         exit()
         
         # Run optimized feature engineering

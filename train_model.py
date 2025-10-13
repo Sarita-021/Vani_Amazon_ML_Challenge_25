@@ -17,9 +17,9 @@ DATASET_FOLDER = 'dataset'
 TRAIN_IMAGES_FOLDER = 'images/train'
 TEST_IMAGES_FOLDER = 'images/test'
 MODELS_FOLDER = 'models'
-TRAIN_DATA_PATH = os.path.join(DATASET_FOLDER, 'sample_train.csv')
-TEST_DATA_PATH = os.path.join(DATASET_FOLDER, 'sample_test.csv')
-OUTPUT_PATH = os.path.join(DATASET_FOLDER, 'sample_test_out.csv')
+TRAIN_DATA_PATH = os.path.join(DATASET_FOLDER, 'train.csv')
+TEST_DATA_PATH = os.path.join(DATASET_FOLDER, 'test.csv')
+OUTPUT_PATH = os.path.join(DATASET_FOLDER, 'test_out.csv')
 
 # Create necessary directories
 os.makedirs(MODELS_FOLDER, exist_ok=True)
@@ -78,7 +78,8 @@ def train_model():
         learning_rate=0.05,
         num_leaves=31,
         n_jobs=-1,
-        random_state=42
+        random_state=42,
+        verbose=-1
     )
     model.fit(X_train, Y_train_log)
     
@@ -144,6 +145,29 @@ def predict_test_data():
     # Combine test features using numpy concatenation for dense arrays
     X_test = np.hstack([X_test_text, X_test_image])
     print(f"✓ Test features shape: {X_test.shape}")
+        
+        # --- Align Test Features with Training ---
+    print("\n🧩 Aligning Test Features with Trained Model...")
+
+    # Load training metadata
+    expected_features = metadata['total_features']
+
+    # Compare shapes
+    print(f"Expected features: {expected_features}, Test features: {X_test.shape[1]}")
+
+    # Handle missing features by padding zeros if fewer features exist
+    if X_test.shape[1] < expected_features:
+        diff = expected_features - X_test.shape[1]
+        print(f"⚠️ Test data has {diff} fewer features. Padding with zeros...")
+        X_test = np.hstack([X_test, np.zeros((X_test.shape[0], diff))])
+
+    # Handle extra features (should rarely happen)
+    elif X_test.shape[1] > expected_features:
+        diff = X_test.shape[1] - expected_features
+        print(f"⚠️ Test data has {diff} extra features. Trimming to match...")
+        X_test = X_test[:, :expected_features]
+
+    print(f"✓ Aligned test features shape: {X_test.shape}")
     
     # Generate predictions
     print("\n🎯 Generating Predictions...")

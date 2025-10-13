@@ -22,8 +22,8 @@ def setup_and_download_data():
     
     # --- Data Loading ---
     print("Loading data...")
-    TRAIN_DATA_PATH = os.path.join(DATASET_FOLDER, 'sample_train.csv')
-    TEST_DATA_PATH = os.path.join(DATASET_FOLDER, 'sample_test.csv')
+    TRAIN_DATA_PATH = os.path.join(DATASET_FOLDER, 'train.csv')
+    TEST_DATA_PATH = os.path.join(DATASET_FOLDER, 'test.csv')
     
     # Load both training and test data
     try:
@@ -39,7 +39,7 @@ def setup_and_download_data():
         
     except FileNotFoundError as e:
         print(f"Error: Could not find required data files: {e}")
-        print("Please ensure both sample_train.csv and sample_test.csv are in the 'dataset/' folder.")
+        print("Please ensure both train.csv and test.csv are in the 'dataset/' folder.")
         return
 
     # --- Initial EDA (Quick Check) ---
