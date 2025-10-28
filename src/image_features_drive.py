@@ -5,7 +5,7 @@ import pandas as pd
 from tqdm import tqdm
 from PIL import Image, ImageStat
 from sklearn.cluster import KMeans
-from src.drive_utils import get_image_from_drive, init_drive_loader
+from src.drive_utils_fast import get_images_batch_from_drive, init_fast_drive_loader
 
 try:
     import tensorflow as tf
@@ -23,7 +23,7 @@ IMAGE_SIZE = (224, 224)
 def extract_color_features_drive(image_link):
     """Extract color features from Drive image"""
     try:
-        img = get_image_from_drive(image_link)
+        img = get_images_batch_from_drive(image_link)
         if img is None:
             raise ValueError("Could not load image from Drive")
             
@@ -58,7 +58,7 @@ def extract_color_features_drive(image_link):
 def extract_texture_features_drive(image_link):
     """Extract texture features from Drive image"""
     try:
-        img = get_image_from_drive(image_link)
+        img = get_images_batch_from_drive(image_link)
         if img is None:
             raise ValueError("Could not load image from Drive")
             
@@ -76,7 +76,7 @@ def extract_texture_features_drive(image_link):
 def extract_composition_features_drive(image_link):
     """Extract composition features from Drive image"""
     try:
-        img = get_image_from_drive(image_link)
+        img = get_images_batch_from_drive(image_link)
         if img is None:
             raise ValueError("Could not load image from Drive")
             
@@ -98,7 +98,7 @@ def extract_composition_features_drive(image_link):
 def load_and_preprocess_image_drive(image_link):
     """Load and preprocess image from Drive"""
     try:
-        img = get_image_from_drive(image_link)
+        img = get_images_batch_from_drive(image_link)
         if img is None:
             return None
             
@@ -141,11 +141,11 @@ def extract_deep_features_drive(df, model_name='resnet50', batch_size=32):
     return features
 
 def extract_comprehensive_image_features_drive(df: pd.DataFrame, use_deep_features=True, model_name='resnet50', 
-                                             credentials_path='credentials.json', folder_id='1ZXP3slTxtjvVaqTFrblfR8eR5lf07nNK'):
+                                             credentials_path='credentials.json', folder_id='1NbCCpQBHPAsZXmqa1p5f8l_kYvjmG3hI'):
     """Extract comprehensive image features from Google Drive"""
     
     # Initialize Drive loader
-    init_drive_loader(credentials_path, folder_id)
+    init_fast_drive_loader(credentials_path, folder_id)
     
     print("🚀 Starting Drive Image Feature Extraction...")
     

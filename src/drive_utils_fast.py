@@ -68,7 +68,7 @@ class FastDriveImageLoader:
 
 drive_loader = None
 
-def init_fast_drive_loader(credentials_path='credentials.json', folder_id='1ZXP3slTxtjvVaqTFrblfR8eR5lf07nNK'):
+def init_fast_drive_loader(credentials_path='credentials.json', folder_id='1NbCCpQBHPAsZXmqa1p5f8l_kYvjmG3hI'):
     global drive_loader
     drive_loader = FastDriveImageLoader(credentials_path, folder_id)
     return drive_loader
